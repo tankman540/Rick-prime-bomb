@@ -1,0 +1,417 @@
+local Pl, RS, TS, Db, WS = game:GetService("Players"), game:GetService("RunService"), game:GetService("TweenService"), game:GetService("Debris"), game:GetService("Workspace")
+local V, CF, rad = Vector3.new, CFrame.new, math.rad
+local rng = Random.new()
+local function rnd(a, b) return rng:NextNumber(a, b) end
+local function try(f, ...) return pcall(f, ...) end
+local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
+local function ball(d) return V(d, d, d) end
+local function guard(f)
+ return function(...)
+  local ok, e = pcall(f, ...)
+  if not ok then
+   pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Bomb error", Text = tostring(e):sub(1, 200), Duration = 20})
+   end)
+  end
+ end
+end
+
+local server, me = RS:IsServer(), Pl.LocalPlayer
+local NAME = "\u{411}\u{43E}\u{43C}\u{431}\u{430} \u{420}\u{438}\u{43A}\u{430} \u{41F}\u{440}\u{430}\u{439}\u{43C}\u{430}"
+local SIZE, STUDS, COOL, FUSE, SPEED, ANGLE, BLAST, DMG, KNOCK = 2.3, 58, 2.5, 2.2, 95, 22, 45, 250, 150
+local BEEP, BOOM = "rbxasset://sounds/electronicpingshort.wav", "rbxasset://sounds/impact_explosion_03.mp3"
+local ON, DIM, DOT, DOTDIM, HOT, WHITE = rgb(214, 60, 190), rgb(112, 36, 100), rgb(255, 176, 236), rgb(170, 76, 150), rgb(255, 226, 250), rgb(255, 255, 255)
+local NEON, SMOOTH, BALL, CYL = Enum.Material.Neon, Enum.Material.SmoothPlastic, Enum.PartType.Ball, Enum.PartType.Cylinder
+
+local function make(class, props, parent)
+ local i = Instance.new(class)
+ for k, v in pairs(props) do i[k] = v end
+ if parent then i.Parent = parent end
+ return i
+end
+local function fx(props, parent)
+ local d = {Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, CastShadow = false, Material = NEON}
+ for k, v in pairs(props) do d[k] = v end
+ return make("Part", d, parent)
+end
+local FX = WS:FindFirstChild("RickPrimeBombFX") or make("Folder", {Name = "RickPrimeBombFX"}, WS)
+
+local function humOf(i)
+ while i and i ~= WS do
+  if i:IsA("Model") then
+   local h = i:FindFirstChildOfClass("Humanoid")
+   if h then return h, i end
+  end
+  i = i.Parent
+ end
+end
+
+local function groundAt(pos)
+ local rp = RaycastParams.new()
+ rp.FilterType = Enum.RaycastFilterType.Exclude
+ rp.FilterDescendantsInstances = {FX}
+ local r = WS:Raycast(pos + V(0, 3, 0), V(0, -80, 0), rp)
+ return r and r.Position or pos - V(0, 2.5, 0)
+end
+
+local function sound(par, id, vol, spd)
+ try(function()
+  local s = make("Sound", {SoundId = id, Volume = vol, PlaybackSpeed = spd, RollOffMaxDistance = 300}, par)
+  s:Play()
+  Db:AddItem(s, 6)
+ end)
+end
+
+local function frame(n, d)
+ local h = math.abs(n.Y) < 0.95 and V(0, 1, 0) or V(1, 0, 0)
+ local y = (h - n * h:Dot(n)).Unit
+ return CFrame.fromMatrix(n * d, n, y, n:Cross(y))
+end
+
+local function build(core, par)
+ local R = SIZE / 2
+ local D = math.sqrt(4 * math.pi * (R + 0.15) ^ 2 / STUDS) * 0.95
+ local L = {
+  {"StudBase", 0.08, 0.42 * D, rgb(18, 18, 26)}, {"StudMid", 0.04, 0.66 * D, rgb(24, 24, 34)},
+  {"StudSkirt", 0.04, D, rgb(30, 30, 42)}, {"StudFace", 0.03, 0.8 * D, rgb(92, 92, 108)},
+  {"StudRim", 0.025, 0.62 * D, rgb(150, 150, 166)}, {"StudGlow", 0.03, 0.48 * D, rgb(104, 104, 120)},
+  {"StudDot", 0.02, 0.2 * D, rgb(150, 150, 166)},
+ }
+ local g = math.pi * (3 - math.sqrt(5))
+ for i = 0, STUDS - 1 do
+  local y = 1 - (2 * i + 1) / STUDS
+  local r = math.sqrt(1 - y * y)
+  local n = V(math.cos(g * i) * r, y, math.sin(g * i) * r)
+  local h = -0.03
+  for _, l in ipairs(L) do
+   local rel = frame(n, R + h + l[2] / 2)
+   h = h + l[2]
+   local p = make("Part", {Name = l[1], Shape = CYL, Size = V(l[2], l[3], l[3]), Color = l[4], Material = SMOOTH, CanCollide = false, CanTouch = false, CanQuery = false, Massless = true, CastShadow = false, CFrame = core.CFrame * rel})
+   make("Weld", {Part0 = core, Part1 = p, C0 = rel}, p)
+   p.Parent = par
+  end
+ end
+end
+
+local BOMB = make("Model", {Name = "RickPrimeBomb"})
+local TOOL = make("Tool", {Name = NAME, ToolTip = NAME, CanBeDropped = false, RequiresHandle = true})
+guard(function()
+ local core = make("Part", {Name = "Core", Shape = BALL, Size = ball(SIZE), Color = rgb(64, 64, 82), Material = SMOOTH, CFrame = CF(0, 0, 0)}, BOMB)
+ try(function() core.CustomPhysicalProperties = PhysicalProperties.new(1.2, 0.6, 0.55, 1, 1) end)
+ BOMB.PrimaryPart = core
+ build(core, BOMB)
+ make("PointLight", {Color = ON, Range = 16, Brightness = 0}, core)
+ local m = BOMB:Clone()
+ m.Core.Name = "Handle"
+ m.Handle.CanCollide = false
+ for _, c in ipairs(m:GetChildren()) do c.Parent = TOOL end
+end)()
+
+local function shake(h, p, d)
+ task.spawn(function()
+  try(function()
+   local b, t = h.CameraOffset, os.clock()
+   while h.Parent and os.clock() - t < d do
+    local k = 1 - (os.clock() - t) / d
+    h.CameraOffset = b + V(rnd(-1, 1) * p * k, rnd(-1, 1) * p * k, 0)
+    task.wait(0.03)
+   end
+   if h.Parent then h.CameraOffset = b end
+  end)
+ end)
+end
+
+local function explode(pos, who)
+ local up, R, gp = V(0, 1, 0), BLAST, groundAt(pos)
+ local S = R / 26
+ local LAV, PUR, VIO, DEEP = rgb(240, 215, 255), rgb(190, 70, 255), rgb(120, 30, 200), rgb(60, 16, 110)
+ local function tw(i, t, g) TS:Create(i, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), g):Play() end
+ local function later(t, f) task.delay(t, function() try(f) end) end
+ local function host(cf) return fx({Size = ball(1), Transparency = 1, CFrame = cf}, FX) end
+ local function blob(dl, a, b, d0, d1, life, c0, c1, mat, tr)
+  later(dl, function()
+   local p = fx({Shape = BALL, Size = ball(d0), CFrame = CF(a), Color = c0, Material = mat, Transparency = tr}, FX)
+   tw(p, life * 0.55, {Size = ball(d1), Position = b})
+   later(life * 0.4, function() tw(p, life * 0.6, {Color = c1, Transparency = 1}) end)
+   Db:AddItem(p, life + 0.3)
+  end)
+ end
+ local function disc(dl, d1, c, tr, h, life, mat)
+  later(dl, function()
+   local p = fx({Shape = CYL, Size = V(h, 4, 4), CFrame = CF(gp + V(0, h / 2, 0)) * CFrame.Angles(0, 0, rad(90)), Color = c, Material = mat, Transparency = tr}, FX)
+   tw(p, life, {Size = V(h * 0.6, d1, d1), Transparency = 1})
+   Db:AddItem(p, life + 0.2)
+  end)
+ end
+ local function burn(cf, class, props, off, life)
+  local h = host(cf)
+  local o = make(class, props, h)
+  later(off, function() o.Enabled = false end)
+  Db:AddItem(h, life)
+ end
+
+ try(function()
+  local h = host(CF(pos))
+  sound(h, BOOM, 3, 0.9)
+  sound(h, BOOM, 2.2, 0.5)
+  Db:AddItem(h, 7)
+  local lh = host(CF(pos + V(0, 3, 0)))
+  tw(make("PointLight", {Color = rgb(190, 90, 255), Brightness = 30, Range = 60}, lh), 1.4, {Brightness = 0})
+  Db:AddItem(lh, 1.6)
+ end)
+
+ blob(0, pos, pos, 4, R * 0.8, 0.45, LAV, LAV, NEON, 0)
+ blob(0, pos, pos, 4, R * 2.8, 0.7, rgb(225, 190, 255), WHITE, NEON, 0.65)
+ blob(0.05, pos, pos, 4, R * 2, 0.6, PUR, VIO, NEON, 0.5)
+ for i = 1, 16 do
+  local d = V(rnd(-1, 1), rnd(-0.3, 1), rnd(-1, 1)).Unit
+  blob(rnd(0, 0.16), pos + d * rnd(0, 3), pos + d * (rnd(0.08, 0.3) * R) + V(0, rnd(1, 6) * S, 0), rnd(3, 5), rnd(0.34, 0.62) * R, rnd(1, 1.9), LAV, VIO, NEON, 0.05)
+ end
+ for i = 1, 18 do
+  local a, r = rnd(0, 6.28), rnd(0, 0.35) * R
+  local s = gp + V(math.cos(a) * r, rnd(0.5, 2), math.sin(a) * r)
+  blob(rnd(0.05, 0.5), s, s + V(0, rnd(7, 20) * S, 0), rnd(2, 3.5) * S, rnd(6, 11) * S, rnd(0.9, 1.7), rgb(240, 150, 255), DEEP, NEON, 0.1)
+ end
+ for i = 1, 36 do
+  local a, g = rnd(0, 6.28), rnd(30, 56)
+  local s, e, d0, d1, life, dl = gp + V(0, 2, 0), nil, rnd(5, 8) * S, rnd(10, 16) * S, rnd(3, 4.5), 0.1 + i * 0.08
+  if i <= 14 then
+   e = gp + V(math.cos(a) * rnd(0, 3) * S, (6 + i * 1.7) * S, math.sin(a) * rnd(0, 3) * S)
+  elseif i <= 25 then
+   local r = rnd(5, 13) * S
+   s, e, d0, d1, life, dl = gp + V(0, 14 * S, 0), gp + V(math.cos(a) * r, rnd(22, 30) * S, math.sin(a) * r), rnd(6, 9) * S, rnd(14, 22) * S, rnd(3.4, 4.8), 1 + rnd(0, 0.5)
+  else
+   local r = rnd(0.2, 0.7) * R
+   e, d0, d1, life, dl = gp + V(math.cos(a) * r, rnd(3, 9) * S, math.sin(a) * r), rnd(4, 7) * S, rnd(10, 18) * S, rnd(2.4, 3.6), rnd(0, 0.5)
+  end
+  blob(dl, s, e, d0, d1, life, rgb(g + 10, g, g + 26), rgb(g + 70, g + 56, g + 96), SMOOTH, 0.3)
+ end
+ disc(0, R * 2.8, rgb(150, 120, 190), 0.4, 2.6, 1.1, SMOOTH)
+ disc(0, R * 2.2, rgb(215, 130, 255), 0.15, 0.5, 0.7, NEON)
+ disc(0.15, R * 3.2, rgb(120, 96, 150), 0.6, 3.4, 1.5, SMOOTH)
+
+ try(function()
+  local m = fx({Shape = CYL, Size = V(0.08, R * 0.9, R * 0.9), Material = SMOOTH, Color = rgb(20, 14, 32), Transparency = 0.2, CFrame = CF(gp + V(0, 0.06, 0)) * CFrame.Angles(0, 0, rad(90))}, FX)
+  tw(m, 7, {Transparency = 1})
+  Db:AddItem(m, 7.5)
+  for i = 1, 40 do
+   local d, g, hot = V(rnd(-1, 1), rnd(0.4, 1.4), rnd(-1, 1)).Unit, rnd(50, 96), i > 28
+   local p = fx({
+    Size = hot and ball(rnd(0.3, 0.6)) or V(rnd(0.4, 1.2), rnd(0.3, 1), rnd(0.4, 1.2)), Anchored = false, CanCollide = true,
+    CFrame = CF(hot and pos or gp + V(0, 1.5, 0)) * CFrame.Angles(rnd(0, 6.28), rnd(0, 6.28), rnd(0, 6.28)),
+    Color = hot and rgb(rnd(180, 230), 90, 255) or rgb(g, g - 10, g + 6), Material = hot and NEON or Enum.Material.Slate,
+   }, FX)
+   p.AssemblyLinearVelocity = d * rnd(40, 140)
+   p.AssemblyAngularVelocity = V(rnd(-12, 12), rnd(-12, 12), rnd(-12, 12))
+   Db:AddItem(p, rnd(1.5, 4))
+  end
+ end)
+
+ try(function()
+  local h = host(CF(pos))
+  local e = make("ParticleEmitter", {Rate = 1800, Lifetime = NumberRange.new(0.6, 1.5), Speed = NumberRange.new(70, 160), SpreadAngle = Vector2.new(180, 180), Acceleration = V(0, -70, 0), LightEmission = 1, Size = NumberSequence.new(0.8, 0), Transparency = NumberSequence.new(0, 1), Color = ColorSequence.new(LAV, PUR)}, h)
+  task.delay(0.18, function() e.Enabled = false end)
+  Db:AddItem(h, 2.2)
+  burn(CF(pos + V(0, 1, 0)), "Fire", {Size = 30, Heat = 25, Color = rgb(210, 110, 255), SecondaryColor = rgb(100, 30, 180)}, 1.3, 3.8)
+  burn(CF(pos + V(0, 3, 0)), "Smoke", {Size = 35, Opacity = 0.6, RiseVelocity = 18, Color = rgb(70, 45, 100)}, 2.4, 7.5)
+  for i = 1, 8 do
+   local a, d = rnd(0, 6.28), rnd(0.1, 0.6) * R
+   burn(CF(gp + V(math.cos(a) * d, 0.5, math.sin(a) * d)), "Fire", {Size = rnd(7, 12), Heat = 10, Color = rgb(200, 100, 255), SecondaryColor = rgb(90, 25, 160)}, rnd(2.5, 4.5), 7)
+  end
+ end)
+
+ try(function()
+  local c, cam = me and me.Character, WS.CurrentCamera
+  local r = not server and c and c:FindFirstChild("HumanoidRootPart")
+  if r and cam then
+   local k = 1 - (r.Position - pos).Magnitude / (R * 1.8)
+   if k > 0 then
+    local a, b = make("ColorCorrectionEffect", {Brightness = 0.8 * k, Contrast = 0.15 * k, TintColor = rgb(225, 170, 255)}, cam), make("BlurEffect", {Size = 40 * k}, cam)
+    tw(a, 1.3, {Brightness = 0, Contrast = 0, TintColor = WHITE})
+    tw(b, 1.3, {Size = 0})
+    Db:AddItem(a, 1.5)
+    Db:AddItem(b, 1.5)
+   end
+  end
+ end)
+
+ try(function()
+  local op = OverlapParams.new()
+  op.FilterType = Enum.RaycastFilterType.Exclude
+  op.FilterDescendantsInstances = {FX}
+  local mine, seen, n = me and me.Character, {}, 0
+  for _, p in ipairs(WS:GetPartBoundsInRadius(pos, R, op)) do
+   local h, m = humOf(p)
+   if h then
+    local hr = m:FindFirstChild("HumanoidRootPart")
+    if not seen[m] and h.Health > 0 and hr then
+     seen[m] = true
+     local off = hr.Position - pos
+     local d = off.Magnitude
+     if d <= R then
+      local f = 1 - d / R
+      local own = server or m == mine
+      if own then shake(h, 3 * (0.3 + 0.7 * f), 1.1) end
+      if not (who and who.Character == m) then
+       try(function() h:TakeDamage(DMG * (0.15 + 0.85 * f)) end)
+      end
+      try(function()
+       if own then h.PlatformStand = true end
+       hr.AssemblyLinearVelocity = hr.AssemblyLinearVelocity + ((d > 0.1 and off.Unit or up) + up * 0.6).Unit * (KNOCK * (0.35 + 0.65 * f))
+       if own then
+        hr.AssemblyAngularVelocity = V(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).Unit * rnd(8, 18)
+        task.delay(1.6 + 2.4 * f, function()
+         try(function()
+          h.PlatformStand = false
+          h:ChangeState(Enum.HumanoidStateType.GettingUp)
+         end)
+        end)
+       end
+      end)
+     end
+    end
+   elseif not p.Anchored and n < 150 then
+    n = n + 1
+    local off = p.Position - pos
+    try(function() p:ApplyImpulse(((off.Magnitude > 0.1 and off.Unit or up) + up * 0.4).Unit * p.Mass * (KNOCK * (0.3 + 0.7 * (1 - math.min(1, off.Magnitude / R))))) end)
+   end
+  end
+ end)
+end
+
+local function launch(root)
+ local bomb = BOMB:Clone()
+ local core = bomb.PrimaryPart
+ bomb.Parent = WS
+ local look, pitch, cam = root.CFrame.LookVector, 0, WS.CurrentCamera
+ if not server and cam then
+  look = cam.CFrame.LookVector
+  pitch = math.asin(math.max(-1, math.min(1, look.Y)))
+ end
+ local flat = V(look.X, 0, look.Z)
+ flat = flat.Magnitude > 0.05 and flat.Unit or V(0, 0, -1)
+ local el = math.max(rad(-5), math.min(rad(70), rad(ANGLE) + pitch * 0.6))
+ bomb:PivotTo(CF(root.Position + flat * 3.2 + V(0, 1.2, 0)))
+ core.AssemblyLinearVelocity = (flat * math.cos(el) + V(0, math.sin(el), 0)) * SPEED + root.AssemblyLinearVelocity
+ core.AssemblyAngularVelocity = V(rnd(-14, 14), rnd(-14, 14), rnd(-14, 14))
+ try(function() core:SetNetworkOwner(nil) end)
+ return bomb, core
+end
+
+local function run(bomb, core, who, whoHum)
+ local gl, dt = {}, {}
+ for _, d in ipairs(bomb:GetDescendants()) do
+  if d.Name == "StudGlow" then gl[#gl + 1] = d elseif d.Name == "StudDot" then dt[#dt + 1] = d end
+ end
+ local light, t0, done = core:FindFirstChildOfClass("PointLight"), os.clock(), false
+ local function boom()
+  if done then return end
+  done = true
+  local p = core.Position
+  bomb:Destroy()
+  explode(p, who)
+ end
+ core.Touched:Connect(function(hit)
+  local age = os.clock() - t0
+  if done or age < 0.15 then return end
+  local h = humOf(hit)
+  if h and h.Health > 0 and (h ~= whoHum or age > 1) then boom() end
+ end)
+ for _, g in ipairs(gl) do
+  task.delay(rnd(0, 0.25), function()
+   if g.Parent and not done then g.Material, g.Color = NEON, ON end
+  end)
+ end
+ for _, d in ipairs(dt) do
+  task.delay(rnd(0, 0.25), function()
+   if d.Parent and not done then d.Material, d.Color = NEON, DOT end
+  end)
+ end
+ if light then light.Brightness = 3 end
+ local on, nxt = true, 0.3
+ while not done do
+  local t = os.clock() - t0
+  if t >= FUSE then break end
+  if not core.Parent then return end
+  if t >= nxt then
+   on = not on
+   local f = t / FUSE
+   local gc, dc = on and ON or DIM, on and DOT or DOTDIM
+   if f > 0.82 then gc, dc = on and HOT or ON, on and WHITE or HOT end
+   for _, g in ipairs(gl) do g.Color = gc end
+   for _, d in ipairs(dt) do d.Color = dc end
+   if light then light.Brightness = on and 3 + 4 * f or 1 end
+   sound(core, BEEP, 0.7, 0.8 + 0.9 * f)
+   nxt = t + math.max(0.06, 0.4 * (1 - f) + 0.06)
+  end
+  task.wait(0.03)
+ end
+ boom()
+end
+
+local function vis(held, v)
+ for _, p in ipairs(held.parts) do
+  if p.Parent then p.Transparency = v and 0 or 1 end
+ end
+end
+
+local function throw(pl, tool, held)
+ if held.busy then return end
+ local ch = pl.Character
+ local hum, root = ch and ch:FindFirstChildOfClass("Humanoid"), ch and ch:FindFirstChild("HumanoidRootPart")
+ if not (hum and root) or hum.Health <= 0 then return end
+ held.busy = true
+ tool.Enabled = false
+ make("StringValue", {Name = "toolanim", Value = "Slash"}, tool)
+ task.wait(0.2)
+ if hum.Health <= 0 or not root.Parent then
+  held.busy = false
+  return
+ end
+ vis(held, false)
+ local ok, bomb, core = pcall(launch, root)
+ if ok and bomb then task.spawn(guard(run), bomb, core, pl, hum) end
+ if not tool.Parent then return end
+ task.wait(COOL)
+ if tool.Parent then
+  vis(held, true)
+  tool.Enabled = true
+ end
+ held.busy = false
+end
+
+local function give(pl)
+ local bp = pl:FindFirstChildOfClass("Backpack") or pl:WaitForChild("Backpack", 10)
+ if not bp then return end
+ for _, t in ipairs(bp:GetChildren()) do
+  if t.Name == NAME then t:Destroy() end
+ end
+ local ch = pl.Character
+ local old = ch and ch:FindFirstChild(NAME)
+ if old then old:Destroy() end
+ local tool, held = TOOL:Clone(), {busy = false, parts = {}}
+ for _, d in ipairs(tool:GetDescendants()) do
+  if d:IsA("BasePart") then held.parts[#held.parts + 1] = d end
+ end
+ tool.Activated:Connect(guard(function() throw(pl, tool, held) end))
+ tool.Parent = bp
+ task.wait(0.2)
+ ch = pl.Character
+ local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+ if hum and hum.Health > 0 and tool.Parent == bp then try(function() hum:EquipTool(tool) end) end
+end
+
+local function setup(pl)
+ pl.CharacterAdded:Connect(guard(function()
+  task.wait(0.3)
+  give(pl)
+ end))
+ if pl.Character then task.spawn(guard(give), pl) end
+end
+
+if server or not me then
+ Pl.PlayerAdded:Connect(setup)
+ for _, p in ipairs(Pl:GetPlayers()) do setup(p) end
+else
+ setup(me)
+end
